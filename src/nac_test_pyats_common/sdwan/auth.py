@@ -404,16 +404,11 @@ class SDWANManagerAuth:
         url = url.rstrip("/")
 
         # API token takes priority over username/password when both are set
+        # No caching for API token auth — JWT decoding is cheap (no network call)
+        # and caching causes stale-token issues when the env var is updated.
         if api_token:
-            def token_auth_wrapper() -> tuple[dict[str, Any], int]:
-                """Wrapper for API token authentication."""
-                return cls._authenticate_with_api_token(api_token)
-
-            return AuthCache.get_or_create(  # type: ignore[no-any-return]
-                controller_type="SDWAN_MANAGER_TOKEN",
-                url=url,
-                auth_func=token_auth_wrapper,
-            )
+            auth_data, _ = cls._authenticate_with_api_token(api_token)
+            return auth_data
 
         # Fall back to session-based authentication
         username = os.environ.get("SDWAN_USERNAME")
