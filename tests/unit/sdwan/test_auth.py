@@ -12,6 +12,7 @@ Tests SD-WAN Manager authentication:
 5. Environment variable validation (missing credentials)
 6. URL normalization (trailing slash handling)
 7. Script body survival through _indent_script_body() transform
+8. API token authentication (20.18+) — JWT decode, CSRF extraction, priority
 """
 
 from io import BytesIO
@@ -518,3 +519,196 @@ class TestScriptBodyIndentSurvival:
         wrapper = f"try:\n{indented}\nexcept Exception:\n    pass\n"
         # compile() raises SyntaxError if the indented script is invalid
         compile(wrapper, "<indented_auth_script>", "exec")
+
+
+# ===========================================================================
+# Helper: build a valid JWT for API token tests
+# ===========================================================================
+
+def _make_jwt(payload: dict[str, Any], header: str = "eyJhbGciOiJIUzI1NiJ9") -> str:
+    """Build a JWT string from a payload dict (signature is a dummy)."""
+    import base64
+    import json
+
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode("ascii")
+    return f"{header}.{payload_b64}.dummy_signature"
+
+
+# ===========================================================================
+# 8. _authenticate_with_api_token() — JWT decode and CSRF extraction
+# ===========================================================================
+
+
+class TestAuthenticateWithApiToken:
+    """Test API token authentication (20.18+)."""
+
+    def test_valid_jwt_with_csrf(self) -> None:
+        """Valid JWT with csrf field returns api_token, csrf_token, auth_type."""
+        token = _make_jwt({"csrf": "abc123csrf", "sub": "admin"})
+
+        result, ttl = SDWANManagerAuth._authenticate_with_api_token(token)
+
+        assert result["api_token"] == token
+        assert result["csrf_token"] == "abc123csrf"
+        assert result["auth_type"] == "token"
+        assert ttl == 3600
+
+    def test_jwt_missing_csrf_raises_error(self) -> None:
+        """JWT without 'csrf' field raises ValueError."""
+        token = _make_jwt({"sub": "admin", "exp": 9999999999})
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token(token)
+
+        assert "missing 'csrf' field" in str(exc_info.value)
+
+    def test_jwt_empty_csrf_raises_error(self) -> None:
+        """JWT with empty 'csrf' field raises ValueError."""
+        token = _make_jwt({"csrf": "", "sub": "admin"})
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token(token)
+
+        assert "missing 'csrf' field" in str(exc_info.value)
+
+    def test_not_a_jwt_raises_error(self) -> None:
+        """Non-JWT string raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token("not-a-jwt")
+
+        assert "not a valid JWT" in str(exc_info.value)
+        assert "got 1" in str(exc_info.value)
+
+    def test_two_part_token_raises_error(self) -> None:
+        """Token with only 2 parts raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token("header.payload")
+
+        assert "got 2" in str(exc_info.value)
+
+    def test_invalid_base64_payload_raises_error(self) -> None:
+        """JWT with corrupt base64 payload raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token("header.!!!invalid!!!.sig")
+
+        assert "not a valid JWT" in str(exc_info.value)
+
+    def test_invalid_json_payload_raises_error(self) -> None:
+        """JWT with valid base64 but invalid JSON payload raises ValueError."""
+        import base64
+
+        bad_payload = base64.urlsafe_b64encode(b"not json").rstrip(b"=").decode()
+        token = f"header.{bad_payload}.sig"
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth._authenticate_with_api_token(token)
+
+        assert "not a valid JWT" in str(exc_info.value)
+
+
+# ===========================================================================
+# 9. get_auth() — API token priority and env var handling
+# ===========================================================================
+
+
+class TestGetAuthApiTokenPriority:
+    """Test that SDWAN_API_TOKEN takes priority over username/password."""
+
+    def test_api_token_used_when_set(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SDWAN_API_TOKEN takes priority over username/password."""
+        token = _make_jwt({"csrf": "my-csrf"})
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_API_TOKEN", token)
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password123")
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_cache.return_value = {
+            "api_token": token,
+            "csrf_token": "my-csrf",
+            "auth_type": "token",
+        }
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_type"] == "token"
+        call_kwargs = mock_cache.call_args.kwargs
+        assert call_kwargs["controller_type"] == "SDWAN_MANAGER_TOKEN"
+
+    def test_session_auth_fallback_when_no_token(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Falls back to session auth when SDWAN_API_TOKEN is not set."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password123")
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_cache.return_value = {
+            "jsessionid": "sess-abc",
+            "xsrf_token": "tok-xyz",
+            "auth_type": "session",
+        }
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_type"] == "session"
+        call_kwargs = mock_cache.call_args.kwargs
+        assert call_kwargs["controller_type"] == "SDWAN_MANAGER"
+
+    def test_missing_url_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing SDWAN_URL raises ValueError even with API token."""
+        token = _make_jwt({"csrf": "my-csrf"})
+        monkeypatch.setenv("SDWAN_API_TOKEN", token)
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth.get_auth()
+
+        assert "SDWAN_URL" in str(exc_info.value)
+
+    def test_missing_creds_without_token_shows_hint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing username/password without token gives helpful error message."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth.get_auth()
+
+        error_msg = str(exc_info.value)
+        assert "SDWAN_USERNAME" in error_msg
+        assert "SDWAN_PASSWORD" in error_msg
+        assert "SDWAN_API_TOKEN" in error_msg
+
+    def test_empty_api_token_falls_back_to_session(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty/whitespace SDWAN_API_TOKEN falls back to session auth."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_API_TOKEN", "  ")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password123")
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_cache.return_value = {
+            "jsessionid": "sess",
+            "xsrf_token": None,
+            "auth_type": "session",
+        }
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_type"] == "session"
+        call_kwargs = mock_cache.call_args.kwargs
+        assert call_kwargs["controller_type"] == "SDWAN_MANAGER"

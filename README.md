@@ -68,9 +68,9 @@ Each NAC architecture repository previously contained duplicated PyATS infrastru
   - `ACIDeviceResolver` - Device inventory from ACI data models
 
 - **SD-WAN**
-  - `VManageAuth` - vManage authentication with token-based sessions
-  - `VManageTestBase` - Base class for vManage API tests
-  - `SDWANSSHTestBase` - Base class for SD-WAN D2D/SSH tests
+  - `SDWANManagerAuth` - SDWAN Manager authentication (session auth + API token auth for 20.18+)
+  - `SDWANManagerTestBase` - Base class for SDWAN Manager API tests
+  - `SDWANTestBase` - Base class for SD-WAN D2D/SSH tests
   - `SDWANDeviceResolver` - Device inventory from sites.nac.yaml
 
 - **Catalyst Center**
@@ -189,10 +189,11 @@ Each architecture requires specific environment variables for authentication:
 - `CC_INSECURE` - Skip SSL verification (optional, default: "True")
 
 ### SD-WAN
-- `VMANAGE_URL` - vManage URL
-- `VMANAGE_USERNAME` - Username
-- `VMANAGE_PASSWORD` - Password
-- `VMANAGE_INSECURE` - Skip SSL verification (optional, default: "True")
+- `SDWAN_URL` - SDWAN Manager URL (required for all auth methods)
+- `SDWAN_API_TOKEN` - JWT API token for 20.18+ token-based auth (optional, takes priority over username/password)
+- `SDWAN_USERNAME` - Username (required for session auth)
+- `SDWAN_PASSWORD` - Password (required for session auth)
+- `SDWAN_INSECURE` - Skip SSL verification (optional, default: "True", session auth only)
 
 ### ACI
 - `APIC_URL` - APIC URL

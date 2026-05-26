@@ -8,8 +8,8 @@ resolver implementations for use with the nac-test framework. It includes suppor
 for both SDWAN Manager API testing and SSH-based device-to-device (D2D) testing.
 
 Classes:
-    SDWANManagerAuth: SDWAN Manager authentication with JSESSIONID and XSRF token
-        management.
+    SDWANManagerAuth: SDWAN Manager authentication with session auth (JSESSIONID +
+        XSRF token) and API token auth (JWT Bearer + CSRF, 20.18+).
     SDWANManagerTestBase: Base class for SDWAN Manager API tests with tracking.
     SDWANTestBase: Base class for SD-WAN SSH/D2D tests with device inventory.
     SDWANDeviceResolver: Resolves device information from the SD-WAN data model.
