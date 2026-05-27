@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `SDWANManagerAuth` now supports JWT-based API token authentication via `SDWAN_API_TOKEN` environment variable
   - When `SDWAN_API_TOKEN` is set, it takes priority over username/password session auth
   - CSRF token is extracted from the JWT payload (`csrf` field) — no network call needed
+  - API token auth bypasses `AuthCache` — JWT decoding is stateless, avoiding stale-token issues
   - `SDWANManagerTestBase.get_sdwan_manager_client()` automatically uses Bearer authorization headers for token auth
-  - Unit tests for JWT decoding, CSRF extraction, and auth method priority
+  - Missing credentials error messages now suggest `SDWAN_API_TOKEN` as an alternative for SD-WAN 20.18+
+  - Unit tests for JWT decoding, CSRF extraction, error handling, and auth method priority
 
 ## [0.2.0] - 2025-01-27
 

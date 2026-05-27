@@ -39,7 +39,7 @@ Each NAC architecture repository previously contained duplicated PyATS infrastru
 │       Layer 2: nac-test-pyats-common (Architecture Adapters)        │
 │                    DEPENDS ON nac-test                               │
 │                                                                      │
-│  • Architecture-specific authentication (APICAuth, VManageAuth)      │
+│  • Architecture-specific authentication (APICAuth, SDWANManagerAuth) │
 │  • Architecture-specific test base classes (APICTestBase, etc.)      │
 │  • Architecture-specific device resolvers (SDWANDeviceResolver)      │
 │                       │                                              │
@@ -141,7 +141,7 @@ Each architecture provides an authentication class that handles controller-speci
 
 ```python
 from nac_test_pyats_common.aci import APICAuth
-from nac_test_pyats_common.sdwan import VManageAuth
+from nac_test_pyats_common.sdwan import SDWANManagerAuth
 from nac_test_pyats_common.catc import CatalystCenterAuth
 
 # Authentication is handled automatically when using test base classes
