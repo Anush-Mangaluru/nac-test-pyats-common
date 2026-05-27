@@ -395,7 +395,11 @@ class TestAuthenticateMethod:
             verify_ssl=False,
         )
 
-        assert result == {"jsessionid": "sess-abc", "xsrf_token": "token-xyz"}
+        assert result == {
+            "jsessionid": "sess-abc",
+            "xsrf_token": "token-xyz",
+            "auth_type": "session",
+        }
         assert ttl == 1800
 
     def test_auth_without_xsrf_token(self, mocker: MockerFixture) -> None:
@@ -412,7 +416,11 @@ class TestAuthenticateMethod:
             verify_ssl=False,
         )
 
-        assert result == {"jsessionid": "sess-old", "xsrf_token": None}
+        assert result == {
+            "jsessionid": "sess-old",
+            "xsrf_token": None,
+            "auth_type": "session",
+        }
         assert ttl == 1800
 
 
@@ -433,7 +441,7 @@ class TestGetAuthEnvironmentValidation:
             SDWANManagerAuth.get_auth()
 
         assert "SDWAN_URL" in str(exc_info.value)
-        assert "Missing required environment variables" in str(exc_info.value)
+        assert "Missing required environment variable" in str(exc_info.value)
 
     def test_get_auth_missing_username(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Error when SDWAN_USERNAME is missing."""
@@ -458,14 +466,12 @@ class TestGetAuthEnvironmentValidation:
     def test_get_auth_multiple_missing_vars(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Error message includes all missing variables."""
+        """Missing SDWAN_URL fails first (before checking username/password)."""
         with pytest.raises(ValueError) as exc_info:
             SDWANManagerAuth.get_auth()
 
         error_msg = str(exc_info.value)
         assert "SDWAN_URL" in error_msg
-        assert "SDWAN_USERNAME" in error_msg
-        assert "SDWAN_PASSWORD" in error_msg
 
 
 # ===========================================================================
@@ -547,12 +553,11 @@ class TestAuthenticateWithApiToken:
         """Valid JWT with csrf field returns api_token, csrf_token, auth_type."""
         token = _make_jwt({"csrf": "abc123csrf", "sub": "admin"})
 
-        result, ttl = SDWANManagerAuth._authenticate_with_api_token(token)
+        result = SDWANManagerAuth._authenticate_with_api_token(token)
 
         assert result["api_token"] == token
         assert result["csrf_token"] == "abc123csrf"
         assert result["auth_type"] == "token"
-        assert ttl == 3600
 
     def test_jwt_missing_csrf_raises_error(self) -> None:
         """JWT without 'csrf' field raises ValueError."""
@@ -616,29 +621,20 @@ class TestGetAuthApiTokenPriority:
     """Test that SDWAN_API_TOKEN takes priority over username/password."""
 
     def test_api_token_used_when_set(
-        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SDWAN_API_TOKEN takes priority over username/password."""
+        """SDWAN_API_TOKEN takes priority over username/password (no cache)."""
         token = _make_jwt({"csrf": "my-csrf"})
         monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
         monkeypatch.setenv("SDWAN_API_TOKEN", token)
         monkeypatch.setenv("SDWAN_USERNAME", "admin")
         monkeypatch.setenv("SDWAN_PASSWORD", "password123")
 
-        mock_cache = mocker.patch(
-            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
-        )
-        mock_cache.return_value = {
-            "api_token": token,
-            "csrf_token": "my-csrf",
-            "auth_type": "token",
-        }
-
         result = SDWANManagerAuth.get_auth()
 
         assert result["auth_type"] == "token"
-        call_kwargs = mock_cache.call_args.kwargs
-        assert call_kwargs["controller_type"] == "SDWAN_MANAGER_TOKEN"
+        assert result["api_token"] == token
+        assert result["csrf_token"] == "my-csrf"
 
     def test_session_auth_fallback_when_no_token(
         self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch

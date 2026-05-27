@@ -304,21 +304,19 @@ class SDWANManagerAuth:
             ValueError: If the token is not a valid JWT or is missing the
                 'csrf' field in its payload.
         """
+        parts = api_token.split(".")
+        if len(parts) != 3:  # noqa: PLR2004
+            raise ValueError(
+                "SDWAN_API_TOKEN is not a valid JWT: expected 3 dot-separated "
+                "parts (header.payload.signature), "
+                f"got {len(parts)}."
+            )
         try:
-            parts = api_token.split(".")
-            if len(parts) != 3:  # noqa: PLR2004
-                raise ValueError(
-                    "SDWAN_API_TOKEN is not a valid JWT: expected 3 dot-separated "
-                    "parts (header.payload.signature), "
-                    f"got {len(parts)}."
-                )
             payload_b64 = parts[1]
             # Add padding for base64 decoding
             payload_b64 += "=" * (-len(payload_b64) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        except (json.JSONDecodeError, UnicodeDecodeError, Exception) as e:
-            if isinstance(e, ValueError):
-                raise
+        except Exception as e:
             raise ValueError(
                 "Failed to decode SDWAN_API_TOKEN: not a valid JWT. "
                 "Verify the token format (header.payload.signature)."
