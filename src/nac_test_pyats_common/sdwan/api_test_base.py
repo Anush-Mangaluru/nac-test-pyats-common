@@ -115,7 +115,7 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
         wrapped to capture all API interactions for detailed test reporting.
 
         The client supports two authentication modes based on auth_data['auth_type']:
-        - 'session': JSESSIONID cookie + optional X-XSRF-TOKEN (pre-20.18)
+        - 'session': JSESSIONID cookie + optional X-XSRF-TOKEN (19.2+)
         - 'token': Bearer Authorization + X-XSRF-TOKEN from JWT CSRF (20.18+)
 
         Returns:

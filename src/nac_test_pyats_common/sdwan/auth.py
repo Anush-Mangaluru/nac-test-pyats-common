@@ -50,12 +50,6 @@ logger = logging.getLogger(__name__)
 # SDWAN Manager sessions are typically valid for 30 minutes (1800 seconds) by default
 SDWAN_MANAGER_SESSION_LIFETIME_SECONDS: int = 1800
 
-# Default cache lifetime for API token authentication in seconds
-# API tokens have their own expiration (set by admin), but we cache the decoded
-# result for 1 hour to avoid re-decoding on every test. The JWT itself is validated
-# server-side on each request, so an expired token will fail at request time.
-SDWAN_API_TOKEN_CACHE_LIFETIME_SECONDS: int = 3600
-
 # HTTP timeout for XSRF token fetch (shorter than auth timeout since it's optional)
 XSRF_TOKEN_FETCH_TIMEOUT_SECONDS: float = 10.0
 
@@ -288,7 +282,7 @@ class SDWANManagerAuth:
     @staticmethod
     def _authenticate_with_api_token(
         api_token: str,
-    ) -> tuple[dict[str, Any], int]:
+    ) -> dict[str, Any]:
         """Authenticate using a pre-generated API token (JWT) for SD-WAN 20.18+.
 
         This method decodes the JWT payload to extract the CSRF token without
@@ -303,10 +297,8 @@ class SDWANManagerAuth:
                 environment variable).
 
         Returns:
-            A tuple containing:
-                - auth_dict (dict): Dictionary with 'api_token' (str),
-                  'csrf_token' (str), and 'auth_type' set to 'token'.
-                - expires_in (int): Cache lifetime in seconds.
+            Dictionary with 'api_token' (str), 'csrf_token' (str), and
+            'auth_type' set to 'token'.
 
         Raises:
             ValueError: If the token is not a valid JWT or is missing the
@@ -345,7 +337,7 @@ class SDWANManagerAuth:
             "api_token": api_token,
             "csrf_token": csrf_token,
             "auth_type": "token",
-        }, SDWAN_API_TOKEN_CACHE_LIFETIME_SECONDS
+        }
 
     @classmethod
     def get_auth(cls) -> dict[str, Any]:
@@ -407,8 +399,7 @@ class SDWANManagerAuth:
         # No caching for API token auth — JWT decoding is cheap (no network call)
         # and caching causes stale-token issues when the env var is updated.
         if api_token:
-            auth_data, _ = cls._authenticate_with_api_token(api_token)
-            return auth_data
+            return cls._authenticate_with_api_token(api_token)
 
         # Fall back to session-based authentication
         username = os.environ.get("SDWAN_USERNAME")
@@ -427,8 +418,8 @@ class SDWANManagerAuth:
                 missing_vars.append("SDWAN_PASSWORD")
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing_vars)}. "
-                "Provide SDWAN_API_TOKEN for token auth, or SDWAN_USERNAME and "
-                "SDWAN_PASSWORD for session auth."
+                "Provide SDWAN_API_TOKEN for token auth (SD-WAN 20.18+), or "
+                "SDWAN_USERNAME and SDWAN_PASSWORD for session auth."
             )
 
         # SDWAN_INSECURE=True means verify_ssl=False
