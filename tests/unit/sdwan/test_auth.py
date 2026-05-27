@@ -28,6 +28,22 @@ from nac_test_pyats_common.sdwan.auth import (
 )
 
 # ---------------------------------------------------------------------------
+# Environment isolation — remove real SDWAN_* env vars so tests are hermetic
+# ---------------------------------------------------------------------------
+_SDWAN_ENV_VARS = [
+    "SDWAN_URL", "SDWAN_USERNAME", "SDWAN_PASSWORD",
+    "SDWAN_API_TOKEN", "SDWAN_INSECURE",
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean_sdwan_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove all SDWAN_* env vars before each test for isolation."""
+    for var in _SDWAN_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+# ---------------------------------------------------------------------------
 # Shared test params used by script body execution tests
 # ---------------------------------------------------------------------------
 _BASE_PARAMS: dict[str, Any] = {
