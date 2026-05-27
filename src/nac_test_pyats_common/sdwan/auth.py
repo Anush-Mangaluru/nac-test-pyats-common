@@ -64,7 +64,8 @@ AUTH_REQUEST_TIMEOUT_SECONDS: float = 30.0
 #   Input:  `params` dict with keys: url, username, password, timeout,
 #           xsrf_timeout, verify_ssl
 #   Output: `result` dict with either:
-#           - {"jsessionid": str, "xsrf_token": str | None}  (success)
+#           - {"jsessionid": str, "xsrf_token": str | None,
+#              "auth_type": "session"}                         (success)
 #           - {"error": str}                                   (failure)
 _AUTH_SCRIPT_BODY: str = """
 import http.cookiejar
