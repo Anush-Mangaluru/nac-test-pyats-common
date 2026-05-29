@@ -518,3 +518,163 @@ class TestScriptBodyIndentSurvival:
         wrapper = f"try:\n{indented}\nexcept Exception:\n    pass\n"
         # compile() raises SyntaxError if the indented script is invalid
         compile(wrapper, "<indented_auth_script>", "exec")
+
+
+# ===========================================================================
+# 8. Token auth path — get_matched_credential_set() integration
+# ===========================================================================
+
+
+class TestTokenAuth:
+    """Test token-based authentication path (SD-WAN Manager 20.18+)."""
+
+    def test_token_auth_returns_api_token(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When auth_method=token, returns api_token directly without login."""
+        from nac_test.utils.controller import CredentialSet
+
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_API_TOKEN", "my-secret-token")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = CredentialSet(
+            env_vars=["SDWAN_URL", "SDWAN_API_TOKEN"],
+            label="API Token (20.18+)",
+            auth_method="token",
+        )
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_method"] == "token"
+        assert result["api_token"] == "my-secret-token"
+
+    def test_token_auth_missing_token_raises(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error when SDWAN_API_TOKEN is missing in token mode."""
+        from nac_test.utils.controller import CredentialSet
+
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = CredentialSet(
+            env_vars=["SDWAN_URL", "SDWAN_API_TOKEN"],
+            label="API Token (20.18+)",
+            auth_method="token",
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth.get_auth()
+
+        assert "SDWAN_API_TOKEN" in str(exc_info.value)
+
+    def test_token_auth_missing_url_raises(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error when SDWAN_URL is missing in token mode."""
+        from nac_test.utils.controller import CredentialSet
+
+        monkeypatch.setenv("SDWAN_API_TOKEN", "my-secret-token")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = CredentialSet(
+            env_vars=["SDWAN_URL", "SDWAN_API_TOKEN"],
+            label="API Token (20.18+)",
+            auth_method="token",
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            SDWANManagerAuth.get_auth()
+
+        assert "SDWAN_URL" in str(exc_info.value)
+
+    def test_token_auth_no_subprocess_call(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Token auth does NOT invoke subprocess or AuthCache."""
+        from nac_test.utils.controller import CredentialSet
+
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_API_TOKEN", "my-secret-token")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = CredentialSet(
+            env_vars=["SDWAN_URL", "SDWAN_API_TOKEN"],
+            label="API Token (20.18+)",
+            auth_method="token",
+        )
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_subprocess = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.execute_auth_subprocess"
+        )
+
+        SDWANManagerAuth.get_auth()
+
+        mock_cache.assert_not_called()
+        mock_subprocess.assert_not_called()
+
+    def test_session_auth_when_no_matched_credential_set(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Falls back to session auth when get_matched_credential_set returns None."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password123")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = None
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_cache.return_value = {"jsessionid": "sess-123", "xsrf_token": "xsrf-abc"}
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_method"] == "session"
+        assert result["jsessionid"] == "sess-123"
+        assert result["xsrf_token"] == "xsrf-abc"
+        mock_cache.assert_called_once()
+
+    def test_session_auth_includes_auth_method_key(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Session auth result includes auth_method='session'."""
+        from nac_test.utils.controller import CredentialSet
+
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password123")
+
+        mock_matched = mocker.patch(
+            "nac_test.utils.controller.get_matched_credential_set"
+        )
+        mock_matched.return_value = CredentialSet(
+            env_vars=["SDWAN_URL", "SDWAN_USERNAME", "SDWAN_PASSWORD"],
+            label="Username/Password",
+            auth_method="session",
+        )
+
+        mock_cache = mocker.patch(
+            "nac_test_pyats_common.sdwan.auth.AuthCache.get_or_create"
+        )
+        mock_cache.return_value = {"jsessionid": "sess-456", "xsrf_token": None}
+
+        result = SDWANManagerAuth.get_auth()
+
+        assert result["auth_method"] == "session"
+        assert result["jsessionid"] == "sess-456"

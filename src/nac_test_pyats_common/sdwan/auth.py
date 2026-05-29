@@ -260,48 +260,116 @@ class SDWANManagerAuth:
         """Get SDWAN Manager authentication data with automatic caching and renewal.
 
         This is the primary method that consumers should use to obtain SDWAN Manager
-        authentication data. It leverages the AuthCache to efficiently manage
-        session lifecycle, reusing valid sessions and automatically renewing
-        expired ones. This significantly reduces the number of authentication
-        requests to the SDWAN Manager.
+        authentication data. It consults the credential set matched by nac-test's
+        detect_controller_type() to determine the authentication mechanism:
+
+        - **Token auth** (auth_method="token"): Uses SDWAN_API_TOKEN directly.
+          No session login required. Returns immediately with the bearer token.
+          Available on SD-WAN Manager 20.18+.
+
+        - **Session auth** (auth_method="session"): Uses SDWAN_USERNAME/SDWAN_PASSWORD
+          to perform form-based login, obtaining a JSESSIONID cookie and optional
+          XSRF token. Leverages AuthCache for efficient session reuse.
 
         The method uses a cache key based on the controller type ("SDWAN_MANAGER")
         and URL to ensure proper session isolation between different SDWAN Manager
         instances.
 
-        Environment Variables Required:
+        Environment Variables Required (session auth):
             SDWAN_URL: Base URL of the SDWAN Manager
             SDWAN_USERNAME: SDWAN Manager username for authentication
             SDWAN_PASSWORD: SDWAN Manager password for authentication
             SDWAN_INSECURE: If "True", "1", or "yes" (default: "True"), SSL certificate
                 verification is disabled. Set to "False" to enable SSL verification.
 
+        Environment Variables Required (token auth):
+            SDWAN_URL: Base URL of the SDWAN Manager
+            SDWAN_API_TOKEN: API token for bearer authentication (20.18+)
+
         Returns:
             A dictionary containing:
-                - jsessionid (str): The session cookie value for API requests
-                - xsrf_token (str | None): The XSRF token for CSRF protection
-                  (None for pre-19.2 versions)
+                - auth_method (str): "token" or "session"
+                - api_token (str): Bearer token (only when auth_method="token")
+                - jsessionid (str): Session cookie (only when auth_method="session")
+                - xsrf_token (str | None): XSRF token (only when auth_method="session")
 
         Raises:
-            ValueError: If any required environment variables (SDWAN_URL,
-                SDWAN_USERNAME, SDWAN_PASSWORD) are not set.
-            SubprocessAuthError: If authentication fails due to invalid credentials,
-                network issues, connection timeouts, or SDWAN Manager server errors.
-                The error message will contain details from the authentication
-                subprocess.
+            ValueError: If required environment variables are not set for the
+                determined auth method.
+            SubprocessAuthError: If session authentication fails due to invalid
+                credentials, network issues, connection timeouts, or SDWAN Manager
+                server errors.
 
         Example:
-            >>> # Set environment variables first
-            >>> import os
+            >>> # Token auth (20.18+)
+            >>> os.environ["SDWAN_URL"] = "https://sdwan-manager.example.com"
+            >>> os.environ["SDWAN_API_TOKEN"] = "my-api-token"
+            >>> auth_data = SDWANManagerAuth.get_auth()
+            >>> auth_data["auth_method"]
+            'token'
+            >>> headers = {"Authorization": f"Bearer {auth_data['api_token']}"}
+
+            >>> # Session auth (legacy)
             >>> os.environ["SDWAN_URL"] = "https://sdwan-manager.example.com"
             >>> os.environ["SDWAN_USERNAME"] = "admin"
             >>> os.environ["SDWAN_PASSWORD"] = "password123"
-            >>> # Get authentication data
             >>> auth_data = SDWANManagerAuth.get_auth()
-            >>> # Use in API requests
+            >>> auth_data["auth_method"]
+            'session'
             >>> headers = {"Cookie": f"JSESSIONID={auth_data['jsessionid']}"}
-            >>> if auth_data.get("xsrf_token"):
-            ...     headers["X-XSRF-TOKEN"] = auth_data["xsrf_token"]
+        """
+        from nac_test.utils.controller import get_matched_credential_set
+
+        # Determine auth method from the credential set matched during detection
+        matched = get_matched_credential_set("SDWAN")
+        auth_method = matched.auth_method if matched else "session"
+
+        if auth_method == "token":
+            return cls._get_token_auth()
+
+        return cls._get_session_auth()
+
+    @classmethod
+    def _get_token_auth(cls) -> dict[str, Any]:
+        """Get token-based authentication data (SD-WAN Manager 20.18+).
+
+        Reads SDWAN_API_TOKEN from the environment and returns it for use
+        as a Bearer token. No network call or caching required.
+
+        Returns:
+            Dictionary with auth_method="token" and the api_token value.
+
+        Raises:
+            ValueError: If SDWAN_URL or SDWAN_API_TOKEN is not set.
+        """
+        url = os.environ.get("SDWAN_URL")
+        api_token = os.environ.get("SDWAN_API_TOKEN")
+
+        if not all([url, api_token]):
+            missing_vars: list[str] = []
+            if not url:
+                missing_vars.append("SDWAN_URL")
+            if not api_token:
+                missing_vars.append("SDWAN_API_TOKEN")
+            raise ValueError(
+                f"Missing required environment variables: {', '.join(missing_vars)}"
+            )
+
+        return {"auth_method": "token", "api_token": api_token}
+
+    @classmethod
+    def _get_session_auth(cls) -> dict[str, Any]:
+        """Get session-based authentication data (username/password login).
+
+        Performs form-based login to obtain JSESSIONID and optional XSRF token,
+        with caching via AuthCache for session reuse.
+
+        Returns:
+            Dictionary with auth_method="session", jsessionid, and xsrf_token.
+
+        Raises:
+            ValueError: If SDWAN_URL, SDWAN_USERNAME, or SDWAN_PASSWORD is not set.
+            SubprocessAuthError: If authentication fails.
         """
         url = os.environ.get("SDWAN_URL")
         username = os.environ.get("SDWAN_USERNAME")
@@ -336,8 +404,10 @@ class SDWANManagerAuth:
 
         # AuthCache.get_or_create returns dict[str, Any], but mypy can't verify this
         # because nac_test lacks py.typed marker.
-        return AuthCache.get_or_create(  # type: ignore[no-any-return]
+        session_data: dict[str, Any] = AuthCache.get_or_create(  # type: ignore[no-any-return]
             controller_type="SDWAN_MANAGER",
             url=url,
             auth_func=auth_wrapper,
         )
+
+        return {"auth_method": "session", **session_data}

@@ -110,18 +110,16 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
         Configured with response tracking.
 
         Creates an HTTP client specifically configured for SDWAN Manager API
-        communication with session headers, base URL, and automatic response
+        communication with appropriate auth headers, base URL, and automatic response
         tracking for HTML report generation. The client is wrapped to capture all
         API interactions for detailed test reporting.
 
-        The client includes:
-        - JSESSIONID cookie in all requests (via Cookie header)
-        - X-XSRF-TOKEN header when available (19.2+)
-        - Content-Type: application/json header
-        - Automatic API call tracking for reporting
+        Supports two authentication modes (determined by auth_data["auth_method"]):
+        - **token**: Uses Authorization: Bearer header (SD-WAN Manager 20.18+)
+        - **session**: Uses JSESSIONID cookie + optional X-XSRF-TOKEN header
 
         Returns:
-            httpx.AsyncClient: Configured client with SDWAN Manager session data,
+            httpx.AsyncClient: Configured client with SDWAN Manager auth headers,
                 base URL, and wrapped for automatic API call tracking. The client
                 has SSL verification disabled for lab environment compatibility.
 
@@ -130,15 +128,18 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
             with self-signed certificates. For production environments, consider
             enabling SSL verification with proper certificate management.
         """
-        # Build headers with Cookie header (following APIC pattern for consistency)
-        headers = {
-            "Cookie": f"JSESSIONID={self.auth_data['jsessionid']}",
-            "Content-Type": "application/json",
-        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
 
-        # Add XSRF token if available (19.2+ requires this for CSRF protection)
-        if self.auth_data.get("xsrf_token"):
-            headers["X-XSRF-TOKEN"] = self.auth_data["xsrf_token"]
+        auth_method = self.auth_data.get("auth_method", "session")
+
+        if auth_method == "token":
+            # Bearer token auth (SD-WAN Manager 20.18+)
+            headers["Authorization"] = f"Bearer {self.auth_data['api_token']}"
+        else:
+            # Session-based auth (JSESSIONID + optional XSRF token)
+            headers["Cookie"] = f"JSESSIONID={self.auth_data['jsessionid']}"
+            if self.auth_data.get("xsrf_token"):
+                headers["X-XSRF-TOKEN"] = self.auth_data["xsrf_token"]
 
         # Get base client from pool with SSL verification disabled for lab compatibility
         base_client = self.pool.get_client(

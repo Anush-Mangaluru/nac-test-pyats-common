@@ -218,9 +218,10 @@ class Test(IOSXETestBase):
 ```
 
 **Environment variable detection priority:**
-1. `SDWAN_URL` + `SDWAN_USERNAME` + `SDWAN_PASSWORD` → SD-WAN architecture
-2. `CC_URL` + `CC_USERNAME` + `CC_PASSWORD` → Catalyst Center architecture
-3. Neither set → Infer from data model structure (sdwan key, catalyst_center key, or devices key)
+1. `SDWAN_URL` + `SDWAN_API_TOKEN` → SD-WAN architecture (token auth, 20.18+)
+2. `SDWAN_URL` + `SDWAN_USERNAME` + `SDWAN_PASSWORD` → SD-WAN architecture (session auth)
+3. `CC_URL` + `CC_USERNAME` + `CC_PASSWORD` → Catalyst Center architecture
+4. Neither set → Infer from data model structure (sdwan key, catalyst_center key, or devices key)
 
 ### Choosing the Right Test Base
 
@@ -229,7 +230,7 @@ Use this decision table to select the appropriate base class:
 | Architecture | Test Type | Base Class | Credentials Needed |
 |-------------|-----------|------------|-------------------|
 | ACI/APIC | API | `APICTestBase` | APIC_URL, APIC_USERNAME, APIC_PASSWORD |
-| SD-WAN | API | `SDWANManagerTestBase` | SDWAN_URL, SDWAN_USERNAME, SDWAN_PASSWORD |
+| SD-WAN | API | `SDWANManagerTestBase` | SDWAN_URL + SDWAN_API_TOKEN (token) or SDWAN_URL + SDWAN_USERNAME + SDWAN_PASSWORD (session) |
 | SD-WAN | SSH/D2D | `SDWANTestBase` | SDWAN_* (for detection) + IOSXE_USERNAME, IOSXE_PASSWORD |
 | SD-WAN | SSH/D2D | `IOSXETestBase` | Same as SDWANTestBase (auto-detects) |
 | Catalyst Center | API | `CatalystCenterTestBase` | CC_URL, CC_USERNAME, CC_PASSWORD |
@@ -873,12 +874,16 @@ POST /api/aaaLogin.json
 **Purpose:** Test Cisco SD-WAN deployments via SDWAN Manager API and direct device SSH
 
 **Components:**
-- `SDWANManagerAuth`: Form-based login with JSESSIONID + XSRF token
+- `SDWANManagerAuth`: Dual-mode authentication (token or session-based)
 - `SDWANManagerTestBase`: Base class for SDWAN Manager API tests
 - `SDWANTestBase`: Base class for SSH/D2D tests to edge devices
 - `SDWANDeviceResolver`: Device inventory resolution from SD-WAN schema
 
-**Environment Variables (Controller):**
+**Environment Variables (Controller — Token Auth, 20.18+):**
+- `SDWAN_URL`: Base URL of SDWAN Manager
+- `SDWAN_API_TOKEN`: API token for Bearer authentication
+
+**Environment Variables (Controller — Session Auth, legacy):**
 - `SDWAN_URL`: Base URL of SDWAN Manager
 - `SDWAN_USERNAME`: SDWAN Manager username
 - `SDWAN_PASSWORD`: SDWAN Manager password
@@ -887,7 +892,18 @@ POST /api/aaaLogin.json
 - `IOSXE_USERNAME`: SSH username for edge devices
 - `IOSXE_PASSWORD`: SSH password for edge devices
 
-**Auth Flow:**
+**Auth Method Selection:**
+The auth mechanism is determined by `get_matched_credential_set("SDWAN")` from
+nac-test's controller detection. If the matched credential set has
+`auth_method="token"`, token auth is used; otherwise session auth is used.
+
+**Auth Flow (Token — 20.18+):**
+```
+No network call required.
+Headers: Authorization: Bearer {SDWAN_API_TOKEN}
+```
+
+**Auth Flow (Session — legacy):**
 ```
 POST /j_security_check (form data: j_username, j_password)
   → Response: JSESSIONID cookie
@@ -896,7 +912,7 @@ GET /dataservice/client/token (19.2+ only)
   → Headers: Cookie: JSESSIONID={id}, X-XSRF-TOKEN: {token}
 ```
 
-**Session Lifetime:** 1800 seconds (30 minutes)
+**Session Lifetime:** 1800 seconds (30 minutes, session auth only)
 
 ### Catalyst Center Adapter
 
@@ -1053,20 +1069,38 @@ class APICAuth:
 class SDWANManagerAuth:
     @staticmethod
     def _authenticate(url: str, username: str, password: str) -> tuple[dict, int]:
-        """Low-level: Direct SDWAN Manager authentication."""
+        """Low-level: Direct SDWAN Manager session authentication."""
         # POST to /j_security_check (form-based)
         # GET /dataservice/client/token (for XSRF)
         # Returns ({"jsessionid": ..., "xsrf_token": ...}, 1800)
 
     @classmethod
     def get_auth(cls) -> dict[str, Any]:
-        """High-level: Cached session retrieval (reads env vars)."""
-        # Reads SDWAN_URL, SDWAN_USERNAME, SDWAN_PASSWORD from env
-        return AuthCache.get_or_create(
-            controller_type="SDWAN_MANAGER",
-            url=url,
-            auth_func=auth_wrapper,
-        )
+        """High-level: Determines auth method and returns credentials.
+
+        Consults get_matched_credential_set("SDWAN") from nac-test to
+        determine which auth mechanism to use:
+        - auth_method="token" → _get_token_auth() (Bearer token)
+        - auth_method="session" → _get_session_auth() (JSESSIONID)
+        """
+        from nac_test.utils.controller import get_matched_credential_set
+        matched = get_matched_credential_set("SDWAN")
+        auth_method = matched.auth_method if matched else "session"
+
+        if auth_method == "token":
+            return cls._get_token_auth()
+        return cls._get_session_auth()
+
+    @classmethod
+    def _get_token_auth(cls) -> dict[str, Any]:
+        """Token auth: reads SDWAN_API_TOKEN, returns immediately."""
+        # Returns {"auth_method": "token", "api_token": <value>}
+
+    @classmethod
+    def _get_session_auth(cls) -> dict[str, Any]:
+        """Session auth: form login with caching via AuthCache."""
+        # Returns {"auth_method": "session", "jsessionid": ..., "xsrf_token": ...}
+        return {"auth_method": "session", **AuthCache.get_or_create(...)}
 ```
 
 ### CatalystCenterAuth Implementation
@@ -1396,7 +1430,8 @@ class StandaloneIOSXEResolver(BaseDeviceResolver):
 | Architecture | URL Variable | Username Variable | Password Variable | Other |
 |-------------|--------------|-------------------|-------------------|-------|
 | ACI (APIC) | `APIC_URL` | `APIC_USERNAME` | `APIC_PASSWORD` | |
-| SD-WAN | `SDWAN_URL` | `SDWAN_USERNAME` | `SDWAN_PASSWORD` | |
+| SD-WAN (token) | `SDWAN_URL` | — | — | `SDWAN_API_TOKEN` |
+| SD-WAN (session) | `SDWAN_URL` | `SDWAN_USERNAME` | `SDWAN_PASSWORD` | |
 | Catalyst Center | `CC_URL` | `CC_USERNAME` | `CC_PASSWORD` | `CC_INSECURE` |
 
 ### Device Credentials

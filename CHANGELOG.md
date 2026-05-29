@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **SD-WAN Token Authentication Support** ([#TBD](https://github.com/netascode/nac-test-pyats-common/pull/TBD))
+  - `SDWANManagerAuth.get_auth()` now consults `get_matched_credential_set()` from nac-test
+    to determine authentication mechanism (token vs session)
+  - **Token auth** (SD-WAN Manager 20.18+): Uses `SDWAN_API_TOKEN` as Bearer token directly;
+    no subprocess login or session caching required
+  - **Session auth** (legacy): Unchanged form-based login with JSESSIONID + XSRF token
+  - `SDWANManagerTestBase.get_sdwan_manager_client()` sets `Authorization: Bearer` header
+    for token auth, or `Cookie: JSESSIONID` + `X-XSRF-TOKEN` for session auth
+  - `get_auth()` return dict now includes `auth_method` key (`"token"` or `"session"`)
+  - 6 new unit tests covering token auth path, fallback behavior, and error cases
+
 ## [0.2.0] - 2025-01-27
 
 ### Added
