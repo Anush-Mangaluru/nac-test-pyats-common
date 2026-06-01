@@ -17,7 +17,7 @@ The auth method is determined by `get_matched_credential_set()` from nac-test's
 controller detection module.
 
 The module implements a multi-tier API design:
-1. _authenticate() - Low-level method that performs direct SDWAN Manager session authentication
+1. _authenticate() - Low-level: direct SDWAN Manager session auth
 2. _get_token_auth() - Low-level method for JWT-based token authentication
 3. _get_session_auth() - Low-level method for session-based authentication
 4. get_auth() - High-level method that routes to the appropriate auth method
