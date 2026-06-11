@@ -558,7 +558,7 @@ class TestTokenAuth:
             label="API Token (20.18+)",
             auth_method="token",
         )
-        return mock
+        return mock  # type: ignore[no-any-return]
 
     def test_token_auth_returns_api_token_and_csrf(
         self, mock_credential_set: MagicMock, monkeypatch: pytest.MonkeyPatch
