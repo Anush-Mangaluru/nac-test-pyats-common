@@ -1042,89 +1042,50 @@ All authentication modules use subprocess-based HTTP execution to avoid macOS fo
 - `SubprocessAuthError`: Raised when authentication subprocess fails
 - Re-exported from each auth module for convenient import by callers
 
-### APICAuth Implementation
+### APICAuth Flow
 
-```python
-class APICAuth:
-    @staticmethod
-    def authenticate(url: str, username: str, password: str) -> tuple[str, int]:
-        """Low-level: Direct APIC authentication."""
-        # POST to /api/aaaLogin.json
-        # Returns (token, 600)
+```
+1. authenticate(url, username, password)
+   → POST /api/aaaLogin.json with credentials
+   → Return (token, ttl=600)
 
-    @classmethod
-    def get_token(cls, url: str, username: str, password: str) -> str:
-        """High-level: Cached token retrieval."""
-        return AuthCache.get_or_create_token(
-            controller_type="ACI",
-            url=url,
-            username=username,
-            password=password,
-            auth_func=cls.authenticate,
-        )
+2. get_token(url, username, password)
+   → Delegate to AuthCache.get_or_create_token(controller_type="ACI", auth_func=authenticate)
+   → Return cached or fresh token
 ```
 
-### SDWANManagerAuth Implementation
+### SDWANManagerAuth Flow
 
-```python
-class SDWANManagerAuth:
-    @staticmethod
-    def _authenticate(url: str, username: str, password: str) -> tuple[dict, int]:
-        """Low-level: Direct SDWAN Manager session authentication."""
-        # POST to /j_security_check (form-based)
-        # GET /dataservice/client/token (for XSRF)
-        # Returns ({"jsessionid": ..., "xsrf_token": ...}, 1800)
+```
+1. Determine auth method:
+   → Call get_matched_credential_set("SDWAN") from nac-test
+   → If matched.auth_method == "token" → use token auth
+   → Otherwise → use session auth
 
-    @classmethod
-    def get_auth(cls) -> dict[str, Any]:
-        """High-level: Determines auth method and returns credentials.
+2a. Token auth (_get_token_auth):
+    → Read SDWAN_API_TOKEN from env
+    → Decode JWT payload to extract CSRF token
+    → Return {auth_method: "token", api_token, csrf_token}
 
-        Consults get_matched_credential_set("SDWAN") from nac-test to
-        determine which auth mechanism to use:
-        - auth_method="token" → _get_token_auth() (Bearer token)
-        - auth_method="session" → _get_session_auth() (JSESSIONID)
-        """
-        from nac_test.utils.controller import get_matched_credential_set
-        matched = get_matched_credential_set("SDWAN")
-        auth_method = matched.auth_method if matched else "session"
-
-        if auth_method == "token":
-            return cls._get_token_auth()
-        return cls._get_session_auth()
-
-    @classmethod
-    def _get_token_auth(cls) -> dict[str, Any]:
-        """Token auth: reads SDWAN_API_TOKEN, decodes JWT for CSRF."""
-        # Decodes JWT payload to extract csrf field
-        # Returns {"auth_method": "token", "api_token": <value>, "csrf_token": <csrf>}
-
-    @classmethod
-    def _get_session_auth(cls) -> dict[str, Any]:
-        """Session auth: form login with caching via AuthCache."""
-        # Returns {"auth_method": "session", "jsessionid": ..., "xsrf_token": ...}
-        return {"auth_method": "session", **AuthCache.get_or_create(...)}
+2b. Session auth (_get_session_auth):
+    → POST /j_security_check (form-based login)
+    → GET /dataservice/client/token (XSRF token)
+    → Cache via AuthCache (ttl=1800)
+    → Return {auth_method: "session", jsessionid, xsrf_token}
 ```
 
-### CatalystCenterAuth Implementation
+### CatalystCenterAuth Flow
 
-```python
-class CatalystCenterAuth:
-    @classmethod
-    def _authenticate(cls, url: str, username: str, password: str, verify_ssl: bool) -> tuple[dict, int]:
-        """Low-level: Direct Catalyst Center authentication."""
-        # POST to /api/system/v1/auth/token (Basic Auth)
-        # Fallback to /dna/system/api/v1/auth/token for legacy
-        # Returns ({"token": ...}, 3600)
+```
+1. _authenticate(url, username, password, verify_ssl)
+   → POST /api/system/v1/auth/token (Basic Auth)
+   → Fallback to /dna/system/api/v1/auth/token for legacy
+   → Return ({token: ...}, ttl=3600)
 
-    @classmethod
-    def get_auth(cls) -> dict[str, Any]:
-        """High-level: Cached token retrieval (reads env vars)."""
-        # Reads CC_URL, CC_USERNAME, CC_PASSWORD, CC_INSECURE from env
-        return AuthCache.get_or_create(
-            controller_type="CC",
-            url=url,
-            auth_func=auth_wrapper,
-        )
+2. get_auth()
+   → Read CC_URL, CC_USERNAME, CC_PASSWORD, CC_INSECURE from env
+   → Delegate to AuthCache.get_or_create(controller_type="CC", auth_func=wrapper)
+   → Return cached or fresh token
 ```
 
 ---
