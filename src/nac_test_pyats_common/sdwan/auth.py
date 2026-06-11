@@ -44,6 +44,8 @@ from nac_test.pyats_core.common.subprocess_auth import (
     execute_auth_subprocess,
 )
 
+from nac_test_pyats_common.common.env import require_env_vars
+
 try:
     from nac_test.utils.controller import get_matched_credential_set
 except ImportError:
@@ -373,21 +375,11 @@ class SDWANManagerAuth:
             ValueError: If SDWAN_URL or SDWAN_API_TOKEN is not set, or if the
                 token is not a valid JWT or is missing the 'csrf' field.
         """
-        url = os.environ.get("SDWAN_URL")
-        api_token = os.environ.get("SDWAN_API_TOKEN")
-
-        if not all([url, api_token]):
-            missing_vars: list[str] = []
-            if not url:
-                missing_vars.append("SDWAN_URL")
-            if not api_token:
-                missing_vars.append("SDWAN_API_TOKEN")
-            raise ValueError(
-                f"Missing required environment variables: {', '.join(missing_vars)}"
-            )
+        env = require_env_vars("SDWAN_URL", "SDWAN_API_TOKEN")
+        api_token = env["SDWAN_API_TOKEN"]
 
         # Decode JWT payload to extract CSRF token
-        parts = api_token.split(".")  # type: ignore[union-attr]
+        parts = api_token.split(".")
         if len(parts) != 3:  # noqa: PLR2004
             raise ValueError(
                 "SDWAN_API_TOKEN is not a valid JWT: expected 3 dot-separated "
@@ -432,36 +424,22 @@ class SDWANManagerAuth:
             ValueError: If SDWAN_URL, SDWAN_USERNAME, or SDWAN_PASSWORD is not set.
             SubprocessAuthError: If authentication fails.
         """
-        url = os.environ.get("SDWAN_URL")
-        username = os.environ.get("SDWAN_USERNAME")
-        password = os.environ.get("SDWAN_PASSWORD")
+        env = require_env_vars("SDWAN_URL", "SDWAN_USERNAME", "SDWAN_PASSWORD")
+        url = env["SDWAN_URL"].rstrip("/")
+        username = env["SDWAN_USERNAME"]
+        password = env["SDWAN_PASSWORD"]
         insecure = os.environ.get("SDWAN_INSECURE", "True").lower() in (
             "true",
             "1",
             "yes",
         )
 
-        if not all([url, username, password]):
-            missing_vars: list[str] = []
-            if not url:
-                missing_vars.append("SDWAN_URL")
-            if not username:
-                missing_vars.append("SDWAN_USERNAME")
-            if not password:
-                missing_vars.append("SDWAN_PASSWORD")
-            raise ValueError(
-                f"Missing required environment variables: {', '.join(missing_vars)}"
-            )
-
-        # Normalize URL by removing trailing slash
-        url = url.rstrip("/")  # type: ignore[union-attr]
-
         # SDWAN_INSECURE=True means verify_ssl=False
         verify_ssl = not insecure
 
         def auth_wrapper() -> tuple[dict[str, Any], int]:
             """Wrapper for authentication that captures closure variables."""
-            return cls._authenticate(url, username, password, verify_ssl)  # type: ignore[arg-type]
+            return cls._authenticate(url, username, password, verify_ssl)
 
         # AuthCache.get_or_create returns dict[str, Any], but mypy can't verify this
         # because nac_test lacks py.typed marker.
