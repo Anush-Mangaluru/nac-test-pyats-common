@@ -391,14 +391,20 @@ class SDWANManagerAuth:
             # Add padding for base64 decoding
             payload_b64 += "=" * (-len(payload_b64) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        except Exception as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
             raise ValueError(
                 "Failed to decode SDWAN_API_TOKEN: not a valid JWT. "
                 "Verify the token format (header.payload.signature)."
             ) from e
 
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "SDWAN_API_TOKEN JWT payload is not a JSON object. "
+                "Verify the token was generated correctly."
+            )
+
         csrf_token = payload.get("csrf", "")
-        if not csrf_token:
+        if not isinstance(csrf_token, str) or not csrf_token:
             raise ValueError(
                 "SDWAN_API_TOKEN is missing 'csrf' field in JWT payload. "
                 "Verify the token was generated correctly."
